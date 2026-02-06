@@ -1,0 +1,24 @@
+{
+  "name": "datafixer",
+  "version": "1.0.0",
+  "description": "AI-Powered Data Validation and Enrichment Service - Fix, enrich, and standardize business data using AWS Bedrock",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:infra && npm run build:backend && npm run build:frontend",
+    "build:infra": "cd infra && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "deploy": "npm run build:frontend && cd infra && npm run deploy",
+    "deploy:subaccount": "npm run build:frontend && cd infra && npm run deploy:subaccount",
+    "test": "npm run test:backend",
+    "test:backend": "cd backend && npm test",
+    "lint": "eslint .",
+    "clean": "rimraf **/node_modules **/dist **/cdk.out"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
