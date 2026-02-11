@@ -100,8 +100,29 @@ export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput>
     const hasHeaderRow = hasHeader(records[0], records[1]);
     
     // Extract headers and data
-    const headers = hasHeaderRow ? records[0] : records[0].map((_, i) => `column_${i + 1}`);
+    const rawHeaders = hasHeaderRow ? records[0] : records[0].map((_, i) => `column_${i + 1}`);
     const dataRows = hasHeaderRow ? records.slice(1) : records;
+    
+    // Sanitize headers: replace empty or whitespace-only headers with generated names.
+    // DynamoDB does not allow empty attribute names, so we must ensure every header is non-empty.
+    let unnamedCounter = 0;
+    const usedHeaders = new Set<string>();
+    const headers = rawHeaders.map((h) => {
+      let name = h.trim();
+      if (!name) {
+        unnamedCounter++;
+        name = `unnamed_column_${unnamedCounter}`;
+      }
+      // Deduplicate headers (e.g. two columns both called "Notes")
+      let uniqueName = name;
+      let suffix = 2;
+      while (usedHeaders.has(uniqueName)) {
+        uniqueName = `${name}_${suffix}`;
+        suffix++;
+      }
+      usedHeaders.add(uniqueName);
+      return uniqueName;
+    });
     
     // Convert to objects
     const parsedData = dataRows.map((row, index) => ({

@@ -21,6 +21,21 @@ const JOBS_TABLE = process.env.JOBS_TABLE!;
 const ROWS_TABLE = process.env.ROWS_TABLE!;
 const ENRICHMENT_CACHE_TABLE = process.env.ENRICHMENT_CACHE_TABLE!;
 
+/**
+ * Recursively remove empty-string keys from an object.
+ * DynamoDB does not allow empty attribute names at any nesting level.
+ */
+function stripEmptyKeys<T>(obj: T): T {
+  if (obj === null || obj === undefined || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(stripEmptyKeys) as unknown as T;
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (key === '') continue;
+    cleaned[key] = stripEmptyKeys(value);
+  }
+  return cleaned as T;
+}
+
 // Job operations
 export async function createJob(job: Job): Promise<void> {
   await docClient.send(new PutCommand({
@@ -160,13 +175,13 @@ export async function deleteJob(tenantId: string, jobId: string): Promise<void> 
 export async function saveRow(jobId: string, row: ProcessedRow): Promise<void> {
   await docClient.send(new PutCommand({
     TableName: ROWS_TABLE,
-    Item: {
+    Item: stripEmptyKeys({
       pk: `JOB#${jobId}`,
       sk: `ROW#${String(row.rowIndex).padStart(10, '0')}`,
       jobId,
       rowStatus: row.status,
       ...row,
-    },
+    }),
   }));
 }
 
@@ -182,13 +197,13 @@ export async function saveRowsBatch(jobId: string, rows: ProcessedRow[]): Promis
       RequestItems: {
         [ROWS_TABLE]: batch.map(row => ({
           PutRequest: {
-            Item: {
+            Item: stripEmptyKeys({
               pk: `JOB#${jobId}`,
               sk: `ROW#${String(row.rowIndex).padStart(10, '0')}`,
               jobId,
               rowStatus: row.status,
               ...row,
-            },
+            }),
           },
         })),
       },
