@@ -86,7 +86,7 @@ export class ProcessingStack extends cdk.Stack {
       functionName: `${projectName}-${environment}-validate-rows`,
       entry: path.join(__dirname, '../../../backend/src/handlers/validate-rows.ts'),
       handler: 'handler',
-      timeout: cdk.Duration.minutes(10),
+      timeout: cdk.Duration.minutes(15), // Max Lambda timeout for large files
       memorySize: 1024,
     });
 

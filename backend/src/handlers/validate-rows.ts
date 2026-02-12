@@ -11,8 +11,9 @@ interface ParsedData {
   rows: Array<{ rowIndex: number; data: Record<string, string> }>;
 }
 
-const BATCH_SIZE = 10; // Process 10 rows at a time for AI validation
+const BATCH_SIZE = 50; // Process 50 rows at a time for AI validation
 const ENRICHMENT_BATCH_SIZE = 5; // Size of batches for enrichment step
+const MAX_AI_VALIDATED_ROWS = 1000; // Cap AI validation to avoid Lambda timeout on large files
 
 // Basic validation rules (deterministic)
 function validateRowDeterministic(
@@ -234,6 +235,7 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
     let totalIssues = 0;
     let errorCount = 0;
     let warningCount = 0;
+    let aiValidatedRows = 0;
     
     // Process in batches
     for (let i = 0; i < parsedData.rows.length; i += BATCH_SIZE) {
@@ -271,10 +273,14 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
       }
       
       // Run AI validation for complex cases (rows with issues or suspicious data)
-      const rowsNeedingAIValidation = batchResults.filter(r => 
-        r.validationIssues.length > 0 || 
-        !r.canonicalData.company_name
-      );
+      // Skip AI validation once we've exceeded the cap to avoid Lambda timeout on large files
+      const canRunAI = aiValidatedRows < MAX_AI_VALIDATED_ROWS;
+      const rowsNeedingAIValidation = canRunAI
+        ? batchResults.filter(r => 
+            r.validationIssues.length > 0 || 
+            !r.canonicalData.company_name
+          )
+        : [];
       
       if (rowsNeedingAIValidation.length > 0) {
         try {
@@ -308,6 +314,7 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
               row.status = 'NEEDS_REVIEW';
             }
           }
+          aiValidatedRows += rowsNeedingAIValidation.length;
         } catch (error) {
           // Log AI validation error but continue with deterministic results
           logger.warn('AI validation failed for batch, using deterministic results only', { error });
@@ -351,6 +358,8 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
       totalIssues,
       errorCount,
       warningCount,
+      aiValidatedRows,
+      aiValidationCapped: aiValidatedRows >= MAX_AI_VALIDATED_ROWS,
       enrichmentBatches: rowBatches.length,
     });
     
