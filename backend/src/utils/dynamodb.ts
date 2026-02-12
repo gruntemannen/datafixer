@@ -192,22 +192,27 @@ export async function saveRowsBatch(jobId: string, rows: ProcessedRow[]): Promis
     batches.push(rows.slice(i, i + 25));
   }
 
-  for (const batch of batches) {
-    await docClient.send(new BatchWriteCommand({
-      RequestItems: {
-        [ROWS_TABLE]: batch.map(row => ({
-          PutRequest: {
-            Item: stripEmptyKeys({
-              pk: `JOB#${jobId}`,
-              sk: `ROW#${String(row.rowIndex).padStart(10, '0')}`,
-              jobId,
-              rowStatus: row.status,
-              ...row,
-            }),
-          },
-        })),
-      },
-    }));
+  // Run batch writes in parallel (up to 10 concurrent) for better throughput
+  const PARALLEL_WRITES = 10;
+  for (let i = 0; i < batches.length; i += PARALLEL_WRITES) {
+    const parallelBatches = batches.slice(i, i + PARALLEL_WRITES);
+    await Promise.all(parallelBatches.map(batch =>
+      docClient.send(new BatchWriteCommand({
+        RequestItems: {
+          [ROWS_TABLE]: batch.map(row => ({
+            PutRequest: {
+              Item: stripEmptyKeys({
+                pk: `JOB#${jobId}`,
+                sk: `ROW#${String(row.rowIndex).padStart(10, '0')}`,
+                jobId,
+                rowStatus: row.status,
+                ...row,
+              }),
+            },
+          })),
+        },
+      }))
+    ));
   }
 }
 

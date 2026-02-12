@@ -11,9 +11,10 @@ interface ParsedData {
   rows: Array<{ rowIndex: number; data: Record<string, string> }>;
 }
 
-const BATCH_SIZE = 50; // Process 50 rows at a time for AI validation
+const BATCH_SIZE = 100; // Process 100 rows at a time for better throughput
 const ENRICHMENT_BATCH_SIZE = 5; // Size of batches for enrichment step
-const MAX_AI_VALIDATED_ROWS = 1000; // Cap AI validation to avoid Lambda timeout on large files
+const MAX_AI_VALIDATED_ROWS = 200; // Cap AI validation to avoid Lambda timeout on large files
+const STATUS_UPDATE_INTERVAL = 500; // Only update job status every N rows
 
 // Basic validation rules (deterministic)
 function validateRowDeterministic(
@@ -30,8 +31,11 @@ function validateRowDeterministic(
     }
   }
   
-  // Required field: company_name
-  if (!canonicalData.company_name?.trim()) {
+  // Required field: company_name — only flag if company_name is actually mapped in the schema.
+  // If company_name isn't in the schema, the user chose not to include that column,
+  // so flagging it as missing would generate false errors for every row.
+  const companyNameIsMapped = schema.mappings.some(m => m.canonicalField === 'company_name');
+  if (companyNameIsMapped && !canonicalData.company_name?.trim()) {
     issues.push({
       field: 'company_name',
       originalValue: canonicalData.company_name || null,
@@ -272,13 +276,15 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
         warningCount += deterministicIssues.filter(i => i.severity === 'WARNING').length;
       }
       
-      // Run AI validation for complex cases (rows with issues or suspicious data)
-      // Skip AI validation once we've exceeded the cap to avoid Lambda timeout on large files
+      // Run AI validation for complex cases (rows with genuine validation issues).
+      // Only trigger AI for rows that have deterministic issues that AI might help resolve.
+      // Don't trigger on structurally missing fields (e.g. company_name not mapped in schema).
       const canRunAI = aiValidatedRows < MAX_AI_VALIDATED_ROWS;
+      const companyNameMapped = schema.mappings.some(m => m.canonicalField === 'company_name');
       const rowsNeedingAIValidation = canRunAI
         ? batchResults.filter(r => 
             r.validationIssues.length > 0 || 
-            !r.canonicalData.company_name
+            (companyNameMapped && !r.canonicalData.company_name)
           )
         : [];
       
@@ -326,15 +332,19 @@ export async function handler(event: InferSchemaOutput): Promise<ValidateRowsOut
       // Save batch to DynamoDB
       await saveRowsBatch(jobId, batchResults);
       
-      // Update progress
-      await updateJobStatus(tenantId, jobId, 'VALIDATING', {
-        processedRows: i + batch.length,
-      });
+      const processedSoFar = i + batch.length;
+      
+      // Only update job status periodically to reduce DynamoDB writes
+      if (processedSoFar % STATUS_UPDATE_INTERVAL < BATCH_SIZE || processedSoFar >= parsedData.rows.length) {
+        await updateJobStatus(tenantId, jobId, 'VALIDATING', {
+          processedRows: processedSoFar,
+        });
+      }
       
       logger.info('Validated batch', { 
         jobId, 
         batchStart: i, 
-        batchEnd: i + batch.length,
+        batchEnd: processedSoFar,
         batchIssues: batchResults.reduce((sum, r) => sum + r.validationIssues.length, 0),
       });
     }
