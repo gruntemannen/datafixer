@@ -458,6 +458,18 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
   
   logger.info('Starting enrichment batch', { jobId, batchIndex, rowCount: batch.length });
   
+  // Determine which canonical fields are actually mapped in the schema.
+  // Enrichment should only add/modify fields the user chose to include.
+  // Fields not in the schema were either excluded or don't exist in the CSV.
+  const mappedCanonicalFields = new Set(
+    schema.mappings
+      .filter(m => m.canonicalField !== 'UNMAPPED')
+      .map(m => m.canonicalField)
+  );
+  logger.info('Mapped canonical fields for enrichment scope', {
+    mappedFields: [...mappedCanonicalFields],
+  });
+  
   // Update job status to ENRICHING (idempotent - safe if multiple batches do this)
   try {
     await updateJobStatus(tenantId, jobId, 'ENRICHING');
@@ -515,9 +527,11 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
       let enrichmentResults: FieldChange[] = [];
       
       if (cachedData && cachedData.data) {
-        // Use cached enrichment
-        enrichmentResults = cachedData.data.fieldChanges as FieldChange[];
-        logger.info('Using cached enrichment', { rowIndex, cacheKey });
+        // Use cached enrichment, but filter to only mapped canonical fields
+        enrichmentResults = (cachedData.data.fieldChanges as FieldChange[]).filter(
+          change => mappedCanonicalFields.has(change.field)
+        );
+        logger.info('Using cached enrichment', { rowIndex, cacheKey, filteredCount: enrichmentResults.length });
       } else {
         // Perform multi-source enrichment
         try {
@@ -569,6 +583,24 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
             row.canonicalData as Record<string, string | null>,
             viesChanges, registryChanges, crossRowChanges, aiChanges,
           );
+          
+          // Only keep enrichments for canonical fields that are mapped in the schema.
+          // If a user didn't include a column (e.g., industry), don't enrich it.
+          const preFilterCount = enrichmentResults.length;
+          const droppedFields = enrichmentResults
+            .filter(c => !mappedCanonicalFields.has(c.field))
+            .map(c => c.field);
+          enrichmentResults = enrichmentResults.filter(change =>
+            mappedCanonicalFields.has(change.field)
+          );
+          if (droppedFields.length > 0) {
+            logger.info('Filtered out-of-scope enrichments', {
+              rowIndex,
+              before: preFilterCount,
+              after: enrichmentResults.length,
+              droppedFields,
+            });
+          }
           
           logger.info('Multi-source enrichment completed', {
             rowIndex,
