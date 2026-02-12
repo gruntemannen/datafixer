@@ -123,9 +123,22 @@ export interface JobResultsResponse {
   hasMore: boolean;
 }
 
+// Column preview types
+export interface ColumnPreview {
+  headers: string[];
+  sampleRows: Record<string, string>[];
+  totalRows: number;
+  hasHeader: boolean;
+  detectedDelimiter: string;
+}
+
 // API Functions
 export async function getUploadUrl(fileName: string): Promise<UploadUrlResponse> {
   return request(`/upload-url?fileName=${encodeURIComponent(fileName)}`);
+}
+
+export async function previewColumns(fileKey: string): Promise<ColumnPreview> {
+  return request(`/preview-columns?fileKey=${encodeURIComponent(fileKey)}`);
 }
 
 export async function uploadFile(url: string, file: File): Promise<void> {
@@ -143,10 +156,18 @@ export async function uploadFile(url: string, file: File): Promise<void> {
   }
 }
 
-export async function createJob(fileKey: string, fileName: string): Promise<Job> {
+export async function createJob(
+  fileKey: string,
+  fileName: string,
+  excludedColumns?: string[]
+): Promise<Job> {
   return request('/jobs', {
     method: 'POST',
-    body: JSON.stringify({ fileKey, fileName }),
+    body: JSON.stringify({
+      fileKey,
+      fileName,
+      ...(excludedColumns && excludedColumns.length > 0 && { excludedColumns }),
+    }),
   });
 }
 

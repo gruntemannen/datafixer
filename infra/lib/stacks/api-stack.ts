@@ -68,6 +68,16 @@ export class ApiStack extends cdk.Stack {
       },
     };
 
+    // Lambda: Preview Columns
+    const previewColumnsFn = new lambdaNodejs.NodejsFunction(this, 'PreviewColumnsFunction', {
+      ...commonLambdaProps,
+      functionName: `${projectName}-${environment}-preview-columns`,
+      entry: path.join(__dirname, '../../../backend/src/handlers/api/preview-columns.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512, // Needs more memory for parsing CSV
+    });
+
     // Lambda: Get Upload URL
     const getUploadUrlFn = new lambdaNodejs.NodejsFunction(this, 'GetUploadUrlFunction', {
       ...commonLambdaProps,
@@ -126,6 +136,7 @@ export class ApiStack extends cdk.Stack {
     });
 
     // Grant permissions
+    dataBucket.grantRead(previewColumnsFn);
     dataBucket.grantReadWrite(getUploadUrlFn);
     dataBucket.grantRead(createJobFn); // Needs read to verify file exists with HeadObject
     dataBucket.grantRead(getDownloadUrlFn);
@@ -179,6 +190,17 @@ export class ApiStack extends cdk.Stack {
       integration: new apigatewayIntegrations.HttpLambdaIntegration(
         'GetUploadUrlIntegration',
         getUploadUrlFn
+      ),
+      authorizer,
+    });
+
+    // GET /preview-columns - Preview CSV columns before processing
+    this.api.addRoutes({
+      path: '/preview-columns',
+      methods: [apigateway.HttpMethod.GET],
+      integration: new apigatewayIntegrations.HttpLambdaIntegration(
+        'PreviewColumnsIntegration',
+        previewColumnsFn
       ),
       authorizer,
     });

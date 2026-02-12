@@ -153,6 +153,7 @@ export const JobSchema = z.object({
     fieldsCorrected: z.number(),
     fieldsDiscovered: z.number(),
   }).optional(),
+  excludedColumns: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -168,6 +169,7 @@ export interface StepFunctionInput {
   userId: string;
   fileKey: string;
   fileName: string;
+  excludedColumns?: string[];
 }
 
 export interface ParseCsvOutput extends StepFunctionInput {
@@ -225,6 +227,7 @@ export interface ApiResponse<T = unknown> {
 export interface CreateJobRequest {
   fileKey: string;
   fileName: string;
+  excludedColumns?: string[];
 }
 
 export interface UploadUrlResponse {

@@ -26,7 +26,7 @@ export async function handler(
     }
 
     const body: CreateJobRequest = JSON.parse(event.body);
-    const { fileKey, fileName } = body;
+    const { fileKey, fileName, excludedColumns } = body;
 
     if (!fileKey || !fileName) {
       return badRequest('fileKey and fileName are required');
@@ -64,6 +64,7 @@ export async function handler(
       fileName,
       fileKey,
       fileSizeBytes,
+      ...(excludedColumns && excludedColumns.length > 0 && { excludedColumns }),
       createdAt: now,
       updatedAt: now,
     };
@@ -77,6 +78,7 @@ export async function handler(
       userId,
       fileKey,
       fileName,
+      ...(excludedColumns && excludedColumns.length > 0 && { excludedColumns }),
     };
 
     await sfnClient.send(new StartExecutionCommand({

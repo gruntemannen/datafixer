@@ -53,7 +53,7 @@ function hasHeader(firstRow: string[], secondRow: string[] | undefined): boolean
 }
 
 export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput> {
-  const { jobId, tenantId, userId, fileKey, fileName } = event;
+  const { jobId, tenantId, userId, fileKey, fileName, excludedColumns } = event;
   
   logger.info('Starting CSV parsing', { jobId, fileKey });
   
@@ -124,16 +124,29 @@ export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput>
       return uniqueName;
     });
     
-    // Convert to objects
+    // Filter out excluded columns if specified
+    const excludedSet = new Set(excludedColumns || []);
+    const includedIndices = headers.map((_, i) => i).filter(i => !excludedSet.has(headers[i]));
+    const filteredHeaders = includedIndices.map(i => headers[i]);
+    
+    if (excludedSet.size > 0) {
+      logger.info('Filtering columns', {
+        jobId,
+        excludedColumns: [...excludedSet],
+        remainingColumns: filteredHeaders.length,
+      });
+    }
+    
+    // Convert to objects (using only included columns)
     const parsedData = dataRows.map((row, index) => ({
       rowIndex: index,
-      data: Object.fromEntries(headers.map((h, i) => [h, row[i] || ''])),
+      data: Object.fromEntries(filteredHeaders.map((h, i) => [h, row[includedIndices[i]] || ''])),
     }));
     
     // Save parsed data to S3
     const rawDataKey = generateRawDataKey(tenantId, jobId);
     await putObject(rawDataKey, JSON.stringify({
-      headers,
+      headers: filteredHeaders,
       rows: parsedData,
     }));
     
@@ -145,8 +158,9 @@ export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput>
     logger.info('CSV parsing completed', { 
       jobId, 
       totalRows: parsedData.length,
-      headerCount: headers.length,
+      headerCount: filteredHeaders.length,
       hasHeader: hasHeaderRow,
+      excludedColumns: excludedSet.size,
     });
     
     return {
