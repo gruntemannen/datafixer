@@ -482,8 +482,9 @@ export default function JobDetails() {
                 className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">All rows</option>
-                <option value="issues">Rows with issues</option>
-                <option value="low-confidence">Low confidence</option>
+                <option value="enriched">Enriched</option>
+                <option value="validated">Validated</option>
+                <option value="needs-review">Needs review</option>
               </select>
             </div>
           </div>

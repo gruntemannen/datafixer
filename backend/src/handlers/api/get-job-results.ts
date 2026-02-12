@@ -28,7 +28,7 @@ export async function handler(
 
     // Parse query parameters
     const pageSize = Math.min(parseInt(event.queryStringParameters?.pageSize || '100', 10), 200);
-    const filter = event.queryStringParameters?.filter; // 'issues', 'low-confidence', or undefined for all
+    const filter = event.queryStringParameters?.filter; // 'enriched', 'validated', 'needs-review', or undefined for all
     const cursor = event.queryStringParameters?.cursor;
 
     // Decode cursor if provided
@@ -56,16 +56,12 @@ export async function handler(
     }
 
     // Apply filters
-    if (filter === 'issues') {
-      // Get rows with validation issues (not just NEEDS_REVIEW status)
-      rows = rows.filter(row => row.validationIssues && row.validationIssues.length > 0);
-    } else if (filter === 'low-confidence') {
-      rows = rows.filter(row => {
-        const lowConfidenceChanges = row.enrichmentResults?.filter(
-          change => change.confidence < 0.7
-        ) || [];
-        return lowConfidenceChanges.length > 0;
-      });
+    if (filter === 'enriched') {
+      rows = rows.filter(row => row.status === 'ENRICHED');
+    } else if (filter === 'validated') {
+      rows = rows.filter(row => row.status === 'VALIDATED');
+    } else if (filter === 'needs-review') {
+      rows = rows.filter(row => row.status === 'NEEDS_REVIEW' || row.status === 'ERROR');
     }
     
     // Apply pagination after filtering
