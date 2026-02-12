@@ -505,8 +505,7 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
       const needsEnrichment = row.validationIssues.length > 0 || hasImportantMissingFields;
       
       if (!needsEnrichment && row.status === 'VALIDATED') {
-        // Data is complete and valid - mark as enriched
-        row.status = 'ENRICHED';
+        // Data is complete and valid - no enrichment needed, keep VALIDATED status
         row.enrichmentResults = [];
         await saveRow(jobId, row);
         processedCount++;
@@ -640,8 +639,10 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
       
       row.enrichmentResults = enrichmentResults;
       
-      // Update row status
-      if (row.status !== 'NEEDS_REVIEW') {
+      // Update row status — only mark as ENRICHED if there are actual enrichment results.
+      // Rows with no enrichments keep their current status (VALIDATED) so the UI
+      // doesn't misleadingly show them as "enriched" with no details.
+      if (row.status !== 'NEEDS_REVIEW' && enrichmentResults.length > 0) {
         row.status = 'ENRICHED';
       }
       
