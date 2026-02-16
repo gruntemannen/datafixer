@@ -127,7 +127,9 @@ export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput>
     // Filter out excluded columns if specified
     const excludedSet = new Set(excludedColumns || []);
     const includedIndices = headers.map((_, i) => i).filter(i => !excludedSet.has(headers[i]));
+    const excludedIndices = headers.map((_, i) => i).filter(i => excludedSet.has(headers[i]));
     const filteredHeaders = includedIndices.map(i => headers[i]);
+    const excludedHeaders = excludedIndices.map(i => headers[i]);
     
     if (excludedSet.size > 0) {
       logger.info('Filtering columns', {
@@ -137,16 +139,24 @@ export async function handler(event: StepFunctionInput): Promise<ParseCsvOutput>
       });
     }
     
-    // Convert to objects (using only included columns)
+    // Convert to objects — included columns go to `data` for processing,
+    // excluded columns go to `excludedData` so they can be restored in the final CSV.
     const parsedData = dataRows.map((row, index) => ({
       rowIndex: index,
       data: Object.fromEntries(filteredHeaders.map((h, i) => [h, row[includedIndices[i]] || ''])),
+      ...(excludedHeaders.length > 0 && {
+        excludedData: Object.fromEntries(excludedHeaders.map((h, i) => [h, row[excludedIndices[i]] || ''])),
+      }),
     }));
     
-    // Save parsed data to S3
+    // Save parsed data to S3.
+    // `headers` = included columns (used by processing pipeline).
+    // `allHeaders` = all columns in original order (used by output generation).
+    // Row `excludedData` preserves excluded column values for the final CSV.
     const rawDataKey = generateRawDataKey(tenantId, jobId);
     await putObject(rawDataKey, JSON.stringify({
       headers: filteredHeaders,
+      allHeaders: headers,
       rows: parsedData,
     }));
     

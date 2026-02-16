@@ -25,7 +25,8 @@ const CANONICAL_FIELDS = [
 
 interface ParsedData {
   headers: string[];
-  rows: Array<{ rowIndex: number; data: Record<string, string> }>;
+  allHeaders?: string[];
+  rows: Array<{ rowIndex: number; data: Record<string, string>; excludedData?: Record<string, string> }>;
 }
 
 export async function handler(event: GenerateOutputsInput): Promise<GenerateOutputsOutput> {
@@ -38,10 +39,19 @@ export async function handler(event: GenerateOutputsInput): Promise<GenerateOutp
     await updateJobStatus(tenantId, jobId, 'GENERATING_OUTPUTS');
     
     // Retrieve the original headers from the parsed raw data to preserve
-    // the exact column order and include unmapped columns
+    // the exact column order and include unmapped columns.
+    // `allHeaders` includes excluded columns; falls back to `headers` for older jobs.
     const rawData = await getObject(rawDataKey);
     const parsedData: ParsedData = JSON.parse(rawData);
-    const originalHeaders = parsedData.headers;
+    const originalHeaders = parsedData.allHeaders || parsedData.headers;
+    
+    // Build a lookup of excluded column data per row index for CSV generation
+    const excludedDataByRow = new Map<number, Record<string, string>>();
+    for (const row of parsedData.rows) {
+      if (row.excludedData) {
+        excludedDataByRow.set(row.rowIndex, row.excludedData);
+      }
+    }
     
     // Collect all rows from DynamoDB
     const allRows: ProcessedRow[] = [];
@@ -66,7 +76,8 @@ export async function handler(event: GenerateOutputsInput): Promise<GenerateOutp
     }
     
     // Generate clean CSV: same columns, same order as the original file
-    const csvData = generateCleanCsv(allRows, originalHeaders, canonicalToSource);
+    // (including excluded columns with their original values)
+    const csvData = generateCleanCsv(allRows, originalHeaders, canonicalToSource, excludedDataByRow);
     const outputCsvKey = generateOutputCsvKey(tenantId, jobId);
     await putObject(outputCsvKey, csvData, 'text/csv');
     
@@ -134,6 +145,7 @@ function generateCleanCsv(
   rows: ProcessedRow[],
   originalHeaders: string[],
   canonicalToSource: Map<string, string>,
+  excludedDataByRow: Map<number, Record<string, string>>,
 ): string {
   // Build source-column -> canonical-field reverse lookup for quick access
   const sourceToCanonical = new Map<string, string>();
@@ -142,6 +154,8 @@ function generateCleanCsv(
   }
 
   const dataRows = rows.map(row => {
+    const excluded = excludedDataByRow.get(row.rowIndex);
+
     return originalHeaders.map(header => {
       const canonicalField = sourceToCanonical.get(header);
 
@@ -152,7 +166,12 @@ function generateCleanCsv(
         return row.canonicalData[canonicalField] ?? row.originalData[header] ?? '';
       }
 
-      // Unmapped column — pass through the original value unchanged
+      // Check if this is an excluded column — restore its original value
+      if (excluded && header in excluded) {
+        return excluded[header] ?? '';
+      }
+
+      // Unmapped but included column — pass through the original value unchanged
       return row.originalData[header] ?? '';
     });
   });
