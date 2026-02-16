@@ -138,6 +138,7 @@ export async function handler(event: GenerateOutputsInput): Promise<GenerateOutp
  * Generate a clean CSV that preserves the original file structure exactly:
  * - Same columns in the same order (including unmapped columns)
  * - Corrected and enriched values written back into the corresponding source columns
+ * - ALL enrichment results applied (including lower-confidence ones)
  * - Unmapped columns passed through unchanged
  * - No synthetic columns (no row_index, canonical_*, confidence, status, etc.)
  */
@@ -156,14 +157,35 @@ function generateCleanCsv(
   const dataRows = rows.map(row => {
     const excluded = excludedDataByRow.get(row.rowIndex);
 
+    // Build a map of ALL enrichment values (regardless of confidence) so they
+    // appear in the CSV. During processing, only >= 70% confidence values are
+    // auto-applied to canonicalData. But the user downloading the CSV expects
+    // to see all enrichment results that were shown in the UI.
+    const enrichedValues = new Map<string, string>();
+    for (const change of row.enrichmentResults || []) {
+      if (change.proposedValue && canonicalToSource.has(change.field)) {
+        enrichedValues.set(change.field, change.proposedValue);
+      }
+    }
+
     return originalHeaders.map(header => {
       const canonicalField = sourceToCanonical.get(header);
 
       if (canonicalField) {
         // This source column is mapped to a canonical field.
-        // Use the canonical value which includes corrections, normalizations,
-        // and enrichment write-backs applied during validate + enrich steps.
-        return row.canonicalData[canonicalField] ?? row.originalData[header] ?? '';
+        // Priority: canonical data (auto-applied enrichments + corrections) first,
+        // then enrichment results (covers lower-confidence changes), then original.
+        const canonicalValue = row.canonicalData[canonicalField];
+        if (canonicalValue && canonicalValue !== '-' && canonicalValue.trim() !== '') {
+          return canonicalValue;
+        }
+        // Fall back to enrichment results (includes lower-confidence values)
+        const enrichedValue = enrichedValues.get(canonicalField);
+        if (enrichedValue) {
+          return enrichedValue;
+        }
+        // Fall back to original value
+        return row.originalData[header] ?? '';
       }
 
       // Check if this is an excluded column — restore its original value
