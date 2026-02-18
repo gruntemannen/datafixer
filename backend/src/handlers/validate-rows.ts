@@ -16,6 +16,10 @@ const ENRICHMENT_BATCH_SIZE = 5; // Size of batches for enrichment step
 const MAX_AI_VALIDATED_ROWS = 200; // Cap AI validation to avoid Lambda timeout on large files
 const STATUS_UPDATE_INTERVAL = 500; // Only update job status every N rows
 
+const NAME_FIELDS = new Set([
+  'company_name', 'alternate_name', 'contact_name', 'city',
+]);
+
 // Basic validation rules (deterministic)
 function validateRowDeterministic(
   data: Record<string, string | null>,
@@ -174,7 +178,14 @@ function toCanonicalData(
   
   for (const mapping of schema.mappings) {
     if (mapping.canonicalField !== 'UNMAPPED') {
-      const value = data[mapping.sourceColumn]?.trim() || null;
+      let value = data[mapping.sourceColumn]?.trim() || null;
+
+      // Strip leading/trailing punctuation artifacts from name fields
+      // (e.g., ", LA CUINA DE LA BOQUERIA S.L." → "LA CUINA DE LA BOQUERIA S.L.")
+      if (value && NAME_FIELDS.has(mapping.canonicalField)) {
+        value = value.replace(/^[,;:\-–—.\s]+|[,;:\-–—\s]+$/g, '').trim() || null;
+      }
+
       canonical[mapping.canonicalField] = value;
       
       // Normalize and auto-correct country code
