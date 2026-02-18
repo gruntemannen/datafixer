@@ -208,6 +208,7 @@ ENRICHMENT TASKS:
 1. ADD missing websites for recognized brands (e.g., Holiday Inn → ihg.com, Hilton → hilton.com)
 2. ADD missing city if derivable from location codes in the name
 3. CORRECT invalid country codes (e.g., UK → GB, SZ for Switzerland → CH)
+4. RESOLVE missing company_name from tax IDs: if company_name is empty/unknown but vat_id or registration_id is present, use the ID to identify the company. Tax ID formats: EU VAT IDs start with a 2-letter country code (e.g., ESB66725649 = Spain, DE123456789 = Germany, GB123456789 = UK, NO912345678MVA = Norway, DK12345678 = Denmark). Use your knowledge of well-known companies and their tax IDs to resolve the name.
 
 COUNTRY CODE RULES:
 - Use ISO 3166-1 alpha-2 codes
@@ -289,8 +290,9 @@ Tasks:
 2. If the country code is invalid (like UK instead of GB), correct it
 3. If city and country code don't match geographically, correct the country code
 4. Add missing industry/sector if you can identify it
-5. Only make changes you're confident about
-6. If web search results are provided, use the URLs as sources and extract factual data from snippets
+5. If company_name is missing/empty but vat_id or registration_id is present, try to identify the company from the ID. Use the country prefix in VAT IDs (e.g., ES = Spain, DE = Germany) and your knowledge of company registrations to propose the company name.
+6. Only make changes you're confident about
+7. If web search results are provided, use the URLs as sources and extract factual data from snippets
 
 Respond with JSON:
 {

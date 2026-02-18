@@ -2,7 +2,7 @@ import { getRow, saveRow, getCachedEnrichment, setCachedEnrichment, normalizeCom
 import { enrichRow as enrichRowAI, ENRICHMENT_CACHE_VERSION } from '../utils/bedrock.js';
 import { validateVat, parseViesAddress } from '../utils/vies.js';
 import { searchCompanyWebsite, searchCompanyInfo } from '../utils/search.js';
-import { searchRegistries, type RegistryResult } from '../utils/registries.js';
+import { searchRegistries, searchRegistriesByTaxId, type RegistryResult } from '../utils/registries.js';
 import type { EnrichRowInput, EnrichRowOutput, ProcessedRow, FieldChange, EnrichmentSource } from '../types/index.js';
 import { Logger } from '@aws-lambda-powertools/logger';
 
@@ -498,7 +498,8 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
       }
       
       // Determine if enrichment is needed
-      const hasImportantMissingFields = !row.canonicalData.website ||
+      const hasImportantMissingFields = !row.canonicalData.company_name ||
+        !row.canonicalData.website ||
         !row.canonicalData.country ||
         !row.canonicalData.city;
       
@@ -512,6 +513,81 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
         continue;
       }
       
+      // Pre-resolution: if company_name is missing but we have a tax/registration ID,
+      // try to resolve the name via direct registry ID lookups + VIES before full enrichment.
+      let preResolveChanges: FieldChange[] = [];
+      if (!row.canonicalData.company_name) {
+        const vatId = row.canonicalData.vat_id || undefined;
+        const regId = row.canonicalData.registration_id || undefined;
+        const rowCountry = row.canonicalData.country || undefined;
+
+        if (vatId || regId) {
+          logger.info('Attempting name pre-resolution from tax ID', { rowIndex, vatId, regId, country: rowCountry });
+
+          // Try VIES first (authoritative for EU VAT), then registry ID lookups, in parallel
+          const [viesResult, registryResult] = await Promise.all([
+            vatId ? validateVat(vatId) : Promise.resolve(null),
+            searchRegistriesByTaxId(vatId, regId, rowCountry),
+          ]);
+
+          const now = new Date().toISOString();
+          let resolvedName: string | null = null;
+
+          if (viesResult?.name) {
+            resolvedName = viesResult.name;
+            preResolveChanges.push({
+              field: 'company_name',
+              originalValue: null,
+              proposedValue: viesResult.name,
+              confidence: 0.95,
+              reasoning: `Company name resolved from VAT ID ${vatId} via EU VIES registry`,
+              sources: [{
+                url: 'https://ec.europa.eu/taxation_customs/vies/',
+                type: 'PUBLIC_DATABASE',
+                retrievedAt: now,
+                snippet: `VIES: ${viesResult.name} (${viesResult.countryCode}${viesResult.vatNumber})`,
+              }],
+              action: 'ADDED',
+            });
+          } else if (registryResult) {
+            resolvedName = registryResult.companyName;
+            preResolveChanges.push({
+              field: 'company_name',
+              originalValue: null,
+              proposedValue: registryResult.companyName,
+              confidence: registryResult.confidence,
+              reasoning: `Company name resolved from ${vatId ? 'tax ID' : 'registration ID'} via ${registryResult.source} registry`,
+              sources: [{
+                url: registryResult.sourceUrl,
+                type: 'BUSINESS_REGISTRY',
+                retrievedAt: now,
+                snippet: `${registryResult.source}: ${registryResult.companyName} (${registryResult.registrationId || 'N/A'})`,
+              }],
+              action: 'ADDED',
+            });
+
+            // Also pick up any extra fields the registry returned
+            if (registryResult.address && !row.canonicalData.address_line1) {
+              preResolveChanges.push({ field: 'address_line1', originalValue: null, proposedValue: registryResult.address, confidence: registryResult.confidence * 0.9, reasoning: `Address from ${registryResult.source} ID lookup`, sources: [{ url: registryResult.sourceUrl, type: 'BUSINESS_REGISTRY', retrievedAt: now, snippet: registryResult.address }], action: 'ADDED' });
+            }
+            if (registryResult.city && !row.canonicalData.city) {
+              preResolveChanges.push({ field: 'city', originalValue: null, proposedValue: registryResult.city, confidence: registryResult.confidence * 0.9, reasoning: `City from ${registryResult.source} ID lookup`, sources: [{ url: registryResult.sourceUrl, type: 'BUSINESS_REGISTRY', retrievedAt: now, snippet: registryResult.city }], action: 'ADDED' });
+            }
+            if (registryResult.country && !row.canonicalData.country) {
+              preResolveChanges.push({ field: 'country', originalValue: null, proposedValue: registryResult.country, confidence: registryResult.confidence, reasoning: `Country from ${registryResult.source} ID lookup`, sources: [{ url: registryResult.sourceUrl, type: 'BUSINESS_REGISTRY', retrievedAt: now, snippet: registryResult.country }], action: 'ADDED' });
+            }
+            if (registryResult.postalCode && !row.canonicalData.postal_code) {
+              preResolveChanges.push({ field: 'postal_code', originalValue: null, proposedValue: registryResult.postalCode, confidence: registryResult.confidence * 0.9, reasoning: `Postal code from ${registryResult.source} ID lookup`, sources: [{ url: registryResult.sourceUrl, type: 'BUSINESS_REGISTRY', retrievedAt: now, snippet: registryResult.postalCode }], action: 'ADDED' });
+            }
+          }
+
+          if (resolvedName) {
+            row.canonicalData.company_name = resolvedName;
+            logger.info('Pre-resolved company name from tax ID', { rowIndex, resolvedName, source: viesResult?.name ? 'VIES' : registryResult?.source });
+          }
+        }
+      }
+
       // Check cache for this entity
       const companyName = row.canonicalData.company_name || '';
       const country = row.canonicalData.country || undefined;
@@ -629,10 +705,22 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
         }
       }
       
+      // Prepend pre-resolution changes (these have already been applied to canonicalData
+      // for company_name so the full pipeline could use them, but we still want them in
+      // the enrichmentResults list so the UI shows what was resolved).
+      if (preResolveChanges.length > 0) {
+        const preResolveFiltered = preResolveChanges.filter(c => mappedCanonicalFields.has(c.field));
+        const existingFields = new Set(enrichmentResults.map(r => r.field));
+        for (const change of preResolveFiltered) {
+          if (!existingFields.has(change.field)) {
+            enrichmentResults.unshift(change);
+          }
+        }
+      }
+
       // Apply enrichment results to canonical data
       for (const change of enrichmentResults) {
         if (change.confidence >= 0.7) {
-          // Auto-apply high confidence changes
           row.canonicalData[change.field] = change.proposedValue;
         }
       }
