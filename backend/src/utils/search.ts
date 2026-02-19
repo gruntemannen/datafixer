@@ -86,3 +86,14 @@ export async function searchCompanyInfo(
   const location = country ? ` ${country}` : '';
   return searchWeb(`${companyName}${location} company information address`);
 }
+
+/**
+ * Search for a company by its tax/VAT/registration ID.
+ * Business directories and government registries index these IDs,
+ * so a web search often resolves the legal entity name.
+ */
+export async function searchByTaxId(
+  taxId: string,
+): Promise<SearchResult[]> {
+  return searchWeb(`"${taxId}" company name legal entity`);
+}

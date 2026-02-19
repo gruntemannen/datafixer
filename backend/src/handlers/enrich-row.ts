@@ -1,7 +1,7 @@
 import { getRow, saveRow, getCachedEnrichment, setCachedEnrichment, normalizeCompanyKey, updateJobStatus, incrementEnrichmentBatchCompleted, getRowsByCompanyName } from '../utils/dynamodb.js';
 import { enrichRow as enrichRowAI, ENRICHMENT_CACHE_VERSION } from '../utils/bedrock.js';
 import { validateVat, parseVatId, parseViesAddress } from '../utils/vies.js';
-import { searchCompanyWebsite, searchCompanyInfo } from '../utils/search.js';
+import { searchCompanyWebsite, searchCompanyInfo, searchByTaxId } from '../utils/search.js';
 import { searchRegistries, searchRegistriesByTaxId, type RegistryResult } from '../utils/registries.js';
 import type { EnrichRowInput, EnrichRowOutput, ProcessedRow, FieldChange, EnrichmentSource } from '../types/index.js';
 import { Logger } from '@aws-lambda-powertools/logger';
@@ -639,16 +639,29 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
         // Perform multi-source enrichment
         try {
           // Run all enrichment sources in parallel where possible
-          const [viesChanges, registryChanges, crossRowChanges, webSearchResults] = await Promise.all([
+          // Determine which tax ID to search the web for (if any)
+          const taxIdForSearch = row.canonicalData.vat_id || row.canonicalData.registration_id || null;
+
+          const [viesChanges, registryChanges, crossRowChanges, webSearchResults, taxIdSearchResults] = await Promise.all([
             // 1. VIES VAT validation (authoritative EU data)
             enrichFromVies(row),
             // 2. Company register lookups (Brreg, CVR, Companies House, OpenCorporates)
             enrichFromRegistries(row),
             // 3. Cross-row consistency
             enrichFromCrossRowConsistency(jobId, row),
-            // 4. Web search (if API key configured)
+            // 4. Web search by company name (if API key configured)
             enrichFromWebSearch(companyName, country || null),
+            // 5. Web search by tax ID — resolves legal entity names from business directories
+            taxIdForSearch ? searchByTaxId(taxIdForSearch) : Promise.resolve([]),
           ]);
+
+          // Merge tax ID search results into web search results for the AI
+          if (taxIdSearchResults.length > 0) {
+            webSearchResults.push({
+              query: `Tax ID lookup: ${taxIdForSearch}`,
+              results: taxIdSearchResults,
+            });
+          }
 
           // 4. AI enrichment (with web search results injected)
           let aiChanges: FieldChange[] = [];

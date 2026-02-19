@@ -14,11 +14,11 @@ const bedrockClient = new BedrockRuntimeClient({
   region: process.env.AWS_REGION || 'eu-central-1' 
 });
 
-// Using Claude 3.5 Sonnet via EU inference profile - most accurate for geographic knowledge
-const MODEL_ID = 'eu.anthropic.claude-3-5-sonnet-20240620-v1:0';
+// Using Claude 4.5 Haiku via EU inference profile - fast, capable, and cost-effective
+const MODEL_ID = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Cache version - increment this when model or prompts change to invalidate old cached results
-export const ENRICHMENT_CACHE_VERSION = 'v6-vies-name-upgrade';
+export const ENRICHMENT_CACHE_VERSION = 'v7-haiku-4.5';
 
 interface ClaudeResponse {
   content: Array<{ type: string; text: string }>;
