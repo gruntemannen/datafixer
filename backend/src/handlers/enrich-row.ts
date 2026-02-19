@@ -1,6 +1,6 @@
 import { getRow, saveRow, getCachedEnrichment, setCachedEnrichment, normalizeCompanyKey, updateJobStatus, incrementEnrichmentBatchCompleted, getRowsByCompanyName } from '../utils/dynamodb.js';
 import { enrichRow as enrichRowAI, ENRICHMENT_CACHE_VERSION } from '../utils/bedrock.js';
-import { validateVat, parseViesAddress } from '../utils/vies.js';
+import { validateVat, parseVatId, parseViesAddress } from '../utils/vies.js';
 import { searchCompanyWebsite, searchCompanyInfo } from '../utils/search.js';
 import { searchRegistries, searchRegistriesByTaxId, type RegistryResult } from '../utils/registries.js';
 import type { EnrichRowInput, EnrichRowOutput, ProcessedRow, FieldChange, EnrichmentSource } from '../types/index.js';
@@ -15,7 +15,10 @@ const logger = new Logger({ serviceName: 'enrich-row' });
 async function enrichFromVies(
   row: ProcessedRow,
 ): Promise<FieldChange[]> {
-  const vatId = row.canonicalData.vat_id;
+  // Try vat_id first; fall back to registration_id if it looks like an EU VAT number
+  const vatId = row.canonicalData.vat_id
+    || (row.canonicalData.registration_id && parseVatId(row.canonicalData.registration_id)
+      ? row.canonicalData.registration_id : null);
   if (!vatId) return [];
 
   const viesResult = await validateVat(vatId);
@@ -524,9 +527,12 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
         if (vatId || regId) {
           logger.info('Attempting name pre-resolution from tax ID', { rowIndex, vatId, regId, country: rowCountry });
 
+          // If registration_id looks like a VAT ID (EU country prefix + digits), try VIES with it too
+          const viesCandidate = vatId || (regId && parseVatId(regId) ? regId : undefined);
+
           // Try VIES first (authoritative for EU VAT), then registry ID lookups, in parallel
           const [viesResult, registryResult] = await Promise.all([
-            vatId ? validateVat(vatId) : Promise.resolve(null),
+            viesCandidate ? validateVat(viesCandidate) : Promise.resolve(null),
             searchRegistriesByTaxId(vatId, regId, rowCountry),
           ]);
 
