@@ -83,57 +83,69 @@ async function enrichFromVies(
     }
   }
 
-  // Country from VAT registration
-  if (viesResult.countryCode && !row.canonicalData.country) {
-    changes.push({
-      field: 'country',
-      originalValue: null,
-      proposedValue: viesResult.countryCode,
-      confidence: 0.98,
-      reasoning: `Country derived from VAT registration in VIES`,
-      sources: [viesSource],
-      action: 'ADDED',
-    });
+  // Country from VAT registration — always master
+  if (viesResult.countryCode) {
+    const current = row.canonicalData.country || null;
+    if (!current || viesResult.countryCode !== current.toUpperCase().trim()) {
+      changes.push({
+        field: 'country',
+        originalValue: current,
+        proposedValue: viesResult.countryCode,
+        confidence: 0.98,
+        reasoning: `Country from EU VIES VAT registration for ${vatId}`,
+        sources: [viesSource],
+        action: current ? 'CORRECTED' : 'ADDED',
+      });
+    }
   }
 
-  // Address parsing from VIES
+  // Address from VIES is the official registered address — always master.
   if (viesResult.address) {
     const parsed = parseViesAddress(viesResult.address);
 
-    if (parsed.streetAddress && !row.canonicalData.address_line1) {
-      changes.push({
-        field: 'address_line1',
-        originalValue: null,
-        proposedValue: parsed.streetAddress,
-        confidence: 0.90,
-        reasoning: `Address from EU VIES VAT registry`,
-        sources: [viesSource],
-        action: 'ADDED',
-      });
+    if (parsed.streetAddress) {
+      const current = row.canonicalData.address_line1 || null;
+      if (!current || parsed.streetAddress.toLowerCase() !== current.toLowerCase().trim()) {
+        changes.push({
+          field: 'address_line1',
+          originalValue: current,
+          proposedValue: parsed.streetAddress,
+          confidence: 0.95,
+          reasoning: `Official registered address from EU VIES for VAT ${vatId}`,
+          sources: [viesSource],
+          action: current ? 'CORRECTED' : 'ADDED',
+        });
+      }
     }
 
-    if (parsed.city && !row.canonicalData.city) {
-      changes.push({
-        field: 'city',
-        originalValue: null,
-        proposedValue: parsed.city,
-        confidence: 0.90,
-        reasoning: `City from EU VIES VAT registry`,
-        sources: [viesSource],
-        action: 'ADDED',
-      });
+    if (parsed.city) {
+      const current = row.canonicalData.city || null;
+      if (!current || parsed.city.toLowerCase() !== current.toLowerCase().trim()) {
+        changes.push({
+          field: 'city',
+          originalValue: current,
+          proposedValue: parsed.city,
+          confidence: 0.95,
+          reasoning: `Official registered city from EU VIES for VAT ${vatId}`,
+          sources: [viesSource],
+          action: current ? 'CORRECTED' : 'ADDED',
+        });
+      }
     }
 
-    if (parsed.postalCode && !row.canonicalData.postal_code) {
-      changes.push({
-        field: 'postal_code',
-        originalValue: null,
-        proposedValue: parsed.postalCode,
-        confidence: 0.90,
-        reasoning: `Postal code from EU VIES VAT registry`,
-        sources: [viesSource],
-        action: 'ADDED',
-      });
+    if (parsed.postalCode) {
+      const current = row.canonicalData.postal_code || null;
+      if (!current || parsed.postalCode !== current.trim()) {
+        changes.push({
+          field: 'postal_code',
+          originalValue: current,
+          proposedValue: parsed.postalCode,
+          confidence: 0.95,
+          reasoning: `Official registered postal code from EU VIES for VAT ${vatId}`,
+          sources: [viesSource],
+          action: current ? 'CORRECTED' : 'ADDED',
+        });
+      }
     }
   }
 
