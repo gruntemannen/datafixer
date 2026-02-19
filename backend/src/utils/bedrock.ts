@@ -18,7 +18,7 @@ const bedrockClient = new BedrockRuntimeClient({
 const MODEL_ID = 'eu.anthropic.claude-3-5-sonnet-20240620-v1:0';
 
 // Cache version - increment this when model or prompts change to invalidate old cached results
-export const ENRICHMENT_CACHE_VERSION = 'v5-registries';
+export const ENRICHMENT_CACHE_VERSION = 'v6-vies-name-upgrade';
 
 interface ClaudeResponse {
   content: Array<{ type: string; text: string }>;

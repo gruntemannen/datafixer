@@ -110,7 +110,19 @@ async function streamToString(stream: Readable): Promise<string> {
   for await (const chunk of stream) {
     chunks.push(Buffer.from(chunk));
   }
-  return Buffer.concat(chunks).toString('utf-8');
+  const buffer = Buffer.concat(chunks);
+
+  // Try UTF-8 first. If it produces replacement characters (U+FFFD) but the raw
+  // buffer doesn't contain the 3-byte UTF-8 sequence for U+FFFD (EF BF BD),
+  // the file is likely Latin-1/Windows-1252 encoded.
+  const utf8 = buffer.toString('utf-8');
+  if (utf8.includes('\uFFFD')) {
+    const hasBomOrRealReplacementChar = buffer.includes(Buffer.from([0xEF, 0xBF, 0xBD]));
+    if (!hasBomOrRealReplacementChar) {
+      return buffer.toString('latin1');
+    }
+  }
+  return utf8;
 }
 
 export function generateUploadKey(tenantId: string, jobId: string, fileName: string): string {

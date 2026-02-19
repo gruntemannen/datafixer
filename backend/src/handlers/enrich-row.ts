@@ -522,8 +522,13 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
         !row.canonicalData.website ||
         !row.canonicalData.country ||
         !row.canonicalData.city;
+
+      // Always enrich rows with a VAT/tax ID — VIES can provide the official legal entity
+      // name and address even when we already have a short/informal company name.
+      const hasVatLikeId = !!(row.canonicalData.vat_id ||
+        (row.canonicalData.registration_id && parseVatId(row.canonicalData.registration_id)));
       
-      const needsEnrichment = row.validationIssues.length > 0 || hasImportantMissingFields;
+      const needsEnrichment = row.validationIssues.length > 0 || hasImportantMissingFields || hasVatLikeId;
       
       if (!needsEnrichment && row.status === 'VALIDATED') {
         // Data is complete and valid - no enrichment needed, keep VALIDATED status
