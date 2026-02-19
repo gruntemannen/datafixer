@@ -18,7 +18,7 @@ const bedrockClient = new BedrockRuntimeClient({
 const MODEL_ID = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Cache version - increment this when model or prompts change to invalidate old cached results
-export const ENRICHMENT_CACHE_VERSION = 'v8-vies-name-always';
+export const ENRICHMENT_CACHE_VERSION = 'v9-vies-context-to-ai';
 
 interface ClaudeResponse {
   content: Array<{ type: string; text: string }>;
@@ -236,6 +236,7 @@ interface EnrichmentInput {
     }>;
   }>;
   registryData?: Record<string, unknown>;
+  viesResult?: { valid: boolean; name?: string; address?: string } | null;
 }
 
 interface EnrichmentOutput {
@@ -273,6 +274,19 @@ export async function enrichRow(input: EnrichmentInput): Promise<EnrichmentOutpu
     }
   }
 
+  // Build VIES context if available
+  let viesContext = '';
+  if (input.viesResult) {
+    if (input.viesResult.name) {
+      viesContext = `\nVIES VAT Registry lookup result: VALID - Legal entity name: "${input.viesResult.name}"${input.viesResult.address ? `, Address: "${input.viesResult.address}"` : ''}`;
+      viesContext += `\nIMPORTANT: The VIES name is the official legal entity name. Use it as the authoritative company_name.\n`;
+    } else if (!input.viesResult.valid) {
+      viesContext = `\nVIES VAT Registry lookup: VAT number is INVALID or EXPIRED. No name returned. Be cautious about assumptions based on the trade name alone.\n`;
+    } else {
+      viesContext = `\nVIES VAT Registry lookup: VAT is valid but no name was returned by the registry.\n`;
+    }
+  }
+
   const prompt = `Enrich this business entity data:
 
 Company: "${companyName}"
@@ -284,7 +298,7 @@ Full data:
 ${JSON.stringify(input.currentData, null, 2)}
 
 ${input.validationIssues.length > 0 ? `Validation issues to address:\n${JSON.stringify(input.validationIssues, null, 2)}` : ''}
-${webSearchContext}
+${viesContext}${webSearchContext}
 Tasks:
 1. If you recognize the brand, add the parent company website
 2. If the country code is invalid (like UK instead of GB), correct it

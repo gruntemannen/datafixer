@@ -49,9 +49,17 @@ async function enrichFromVies(
   // If VIES returned a company name, use it to add or upgrade the current name.
   // VIES is the authoritative source for the legal entity name registered under a VAT number,
   // so it takes priority over informal/trade names in CSV data.
-  if (viesResult.name && viesResult.valid) {
+  if (viesResult.name) {
     const currentName = row.canonicalData.company_name || '';
     const viesName = viesResult.name.trim();
+    logger.info('VIES name comparison', {
+      rowIndex: row.rowIndex,
+      vatId,
+      viesName,
+      currentName,
+      valid: viesResult.valid,
+      namesMatch: viesName.toLowerCase() === currentName.toLowerCase(),
+    });
     if (!currentName) {
       changes.push({
         field: 'company_name',
@@ -638,8 +646,14 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
           // Determine which tax ID to search the web for (if any)
           const taxIdForSearch = row.canonicalData.vat_id || row.canonicalData.registration_id || null;
 
+          // Get the raw VIES result so we can pass it to the AI as context
+          const viesVatId = row.canonicalData.vat_id
+            || (row.canonicalData.registration_id && parseVatId(row.canonicalData.registration_id)
+              ? row.canonicalData.registration_id : null);
+          const rawViesResult = viesVatId ? await validateVat(viesVatId) : null;
+
           const [viesChanges, registryChanges, crossRowChanges, webSearchResults, taxIdSearchResults] = await Promise.all([
-            // 1. VIES VAT validation (authoritative EU data)
+            // 1. VIES VAT validation (use already-fetched result)
             enrichFromVies(row),
             // 2. Company register lookups (Brreg, CVR, Companies House, OpenCorporates)
             enrichFromRegistries(row),
@@ -667,6 +681,11 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
               currentData: row.canonicalData as Record<string, string | null>,
               validationIssues: row.validationIssues,
               webSearchResults: webSearchResults.length > 0 ? webSearchResults : undefined,
+              viesResult: rawViesResult ? {
+                valid: rawViesResult.valid,
+                name: rawViesResult.name,
+                address: rawViesResult.address,
+              } : (viesVatId ? { valid: false } : undefined),
             });
             
             aiChanges = aiResult.fieldChanges;
@@ -689,12 +708,25 @@ export async function handler(event: EnrichRowInput): Promise<EnrichRowOutput> {
             logger.warn('AI enrichment failed, using other sources', { error, rowIndex });
           }
 
+          // Log VIES company_name change details for debugging
+          const viesCompanyChange = viesChanges.find(c => c.field === 'company_name');
+          if (viesCompanyChange) {
+            logger.info('VIES company_name change before merge', {
+              rowIndex, proposedValue: viesCompanyChange.proposedValue,
+              originalValue: viesCompanyChange.originalValue,
+              confidence: viesCompanyChange.confidence,
+            });
+          }
+
           // Merge all sources: VIES > Registry > cross-row > AI (higher confidence wins)
           // Also filters out no-op "enrichments" where proposed value = current value
           enrichmentResults = mergeFieldChanges(
             row.canonicalData as Record<string, string | null>,
             viesChanges, registryChanges, crossRowChanges, aiChanges,
           );
+
+          const mergedFields = enrichmentResults.map(c => c.field);
+          logger.info('Merged enrichment fields', { rowIndex, fields: mergedFields, count: enrichmentResults.length });
           
           // Only keep enrichments for canonical fields that are mapped in the schema.
           // If a user didn't include a column (e.g., industry), don't enrich it.
