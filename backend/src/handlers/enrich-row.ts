@@ -47,9 +47,9 @@ async function enrichFromVies(
   }
 
   // If VIES returned a company name, use it to add or upgrade the current name.
-  // The VIES registry contains the official legal entity name, which is more
-  // complete than informal/short names often found in CSV data (e.g., "Pulker" → "PULKER S.R.L.").
-  if (viesResult.name) {
+  // VIES is the authoritative source for the legal entity name registered under a VAT number,
+  // so it takes priority over informal/trade names in CSV data.
+  if (viesResult.name && viesResult.valid) {
     const currentName = row.canonicalData.company_name || '';
     const viesName = viesResult.name.trim();
     if (!currentName) {
@@ -62,17 +62,13 @@ async function enrichFromVies(
         sources: [viesSource],
         action: 'ADDED',
       });
-    } else if (
-      viesName.toLowerCase() !== currentName.toLowerCase() &&
-      viesName.toLowerCase().includes(currentName.toLowerCase().replace(/[.,\s]+/g, ' ').trim())
-    ) {
-      // VIES name is more complete (contains the current name as a substring)
+    } else if (viesName.toLowerCase() !== currentName.toLowerCase()) {
       changes.push({
         field: 'company_name',
         originalValue: currentName,
         proposedValue: viesName,
-        confidence: 0.90,
-        reasoning: `Official legal entity name from EU VIES registry (current name "${currentName}" is informal/incomplete)`,
+        confidence: 0.92,
+        reasoning: `Official legal entity name registered under VAT ${vatId} in EU VIES (replaces informal/trade name "${currentName}")`,
         sources: [viesSource],
         action: 'CORRECTED',
       });

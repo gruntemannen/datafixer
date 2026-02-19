@@ -18,7 +18,7 @@ const bedrockClient = new BedrockRuntimeClient({
 const MODEL_ID = 'eu.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 // Cache version - increment this when model or prompts change to invalidate old cached results
-export const ENRICHMENT_CACHE_VERSION = 'v7-haiku-4.5';
+export const ENRICHMENT_CACHE_VERSION = 'v8-vies-name-always';
 
 interface ClaudeResponse {
   content: Array<{ type: string; text: string }>;
